@@ -52,5 +52,3 @@ Contributions welcome. New skills must follow the established SKILL.md template 
 ---
 
 **For engineers building systems that matter.**  
-
-Repo is now self-documenting, licensed, and immediately usable. Next? Deep-audit any skill, add cross-skill orchestration, or port one to Grok-native format? Just name it.
