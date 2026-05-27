@@ -1,284 +1,196 @@
 ---
 name: senior-code-review
-description: >
-  Senior code review expertise for evaluating changes across correctness,
-  readability, architecture, security, and performance before merge.
-  Use when reviewing PRs, evaluating diffs, assessing code changes, auditing
-  feature branches, analyzing pull requests, or deciding whether a change is
-  merge-ready. Applies systems-oriented judgment — Diff-as-System-Perturbation,
-  Blast-Radius Reasoning, Future-State Simulation, Chesterton's Fence in Code,
-  System Entropy/TCO Accounting — not just local correctness.
-  Trigger on: "review this PR", "review this diff", "should I merge this",
-  "evaluate this change", "code review", "is this safe to merge",
-  "look at this PR", "check this branch", or any request to assess code
-  changes before they land in a codebase.
+description: Performs senior-level code review evaluating correctness, readability, architecture, security, and performance before merge. Applies Diff-as-System-Perturbation, Blast-Radius Reasoning, Chesterton's Fence, System Entropy/TCO Accounting, and Future-State Simulation to detect invariant violations, coupling growth, rollback hazards, and observability gaps that diff-only review misses. Use before approving a PR, reviewing a branch diff, or evaluating a patch file. Do NOT use for general code explanation, debugging, or refactoring unrelated to a pending merge.
+disable-model-invocation: true
+context: fork
+allowed-tools: Read Bash Glob
+argument-hint: "[branch-name | diff-file.patch | empty=HEAD]"
 ---
 
-# Senior Code Review
+## Purpose
 
-A cognitive module encoding the judgment of a principal-level software
-engineer who evaluates changes not as isolated diffs but as perturbations to a
-living system — assessing invariant preservation, entropy accumulation, blast
-radius, and lifecycle cost alongside local correctness.
+Produce a lifecycle-aware, systems-oriented review that evaluates how this change alters the **living system**, not just the changed lines. Local correctness and passing tests are necessary but insufficient evidence. Small, reasonable changes compound into brittle architecture.
+
+The primary anti-pattern this skill exists to prevent: **diff-only myopia** — approving changed lines in isolation while ignoring the PR's effect on invariants, coupling, entropy, rollback safety, and future evolvability.
 
 ---
 
-## 1. Activation
+## Inputs
 
-Invoke when:
-
-- A user presents a diff, patch, PR description, or branch comparison
-- Asked whether a change is safe, correct, or ready to merge
-- Evaluating code for architectural, security, or performance risk
-- Performing a structured pre-merge review across multiple quality axes
-
-Do **not** invoke for: general coding help, writing new code from scratch, or
-debugging without a comparison context (before/after).
+| Variable | Meaning |
+|---|---|
+| `$ARGUMENTS` | Branch name, `.patch` / `.diff` file path, or empty (defaults to `git diff HEAD`) |
 
 ---
 
-## 2. Expert Salience
+## Phase 1 — Acquire the Diff
 
-**Load-bearing signals — weight these highest:**
+Determine diff source from `$ARGUMENTS`:
 
-1. **Invariant violations** — Does the diff break a pre-existing guarantee
-   (ordering, idempotency, atomicity, access control, null safety)? These are
-   the highest-severity class. A change can be locally correct and globally
-   catastrophic if it silently violates a system invariant.
+```bash
+# If $ARGUMENTS ends in .patch or .diff:
+cat "$ARGUMENTS"
 
-2. **State-space expansion** — Added branches, conditionals, feature flags,
-   fallbacks, and optional parameters multiply the number of states the system
-   can occupy. Each new state is a test surface, a failure mode, and a
-   maintenance liability. Weight this proportional to how hard the new states
-   are to observe and exercise.
+# If $ARGUMENTS is a branch name:
+git diff origin/main..."$ARGUMENTS"
 
-3. **Hot-path entropy** — Business logic, side effects, and branching in
-   latency-critical or high-frequency code paths carry compounded risk:
-   performance regression, correctness drift under load, and cross-cutting
-   interference. Treat as high-severity regardless of apparent simplicity.
+# If $ARGUMENTS is empty:
+git diff HEAD
+```
 
-4. **Coupling delta** — Does the change increase the number of components that
-   must be understood or modified together? Tight coupling is invisible in a
-   diff but dominates long-term TCO.
+List all changed files with change type (A=add, M=modify, D=delete). Emit a one-line summary: `N files changed (+additions / -deletions)`.
 
-5. **Rollback safety** — Is this change independently revertable without a
-   migration? Schema changes, queue format changes, and protocol version bumps
-   often are not. These require explicit commitment criteria before approval.
-
-**Noise signals — do not anchor judgment here:**
-
-- Variable name style choices not governed by an enforced linter
-- Minor comment wording
-- Preference-level formatting outside of team conventions
-- Trivial test utility organization
+If the diff exceeds 800 changed lines, emit a **WARN** immediately:
+> Blast-radius confidence is reduced at this diff size. Recommend splitting the PR before merge review.
 
 ---
 
-## 3. Mental Models
+## Phase 2 — Establish System Context
 
-### Diff-as-System-Perturbation [USER-GROUNDED]
+**Do not skip this phase.** Reviewing lines without system context is diff-only myopia.
 
-The diff is not a list of changed lines; it is a perturbation vector applied
-to a dynamic system. Evaluate it by asking: *what properties of the system
-before the change are no longer guaranteed after it?* This reframes review
-from "is the new code correct?" to "what did the system lose or gain?"
+For every modified or deleted file:
 
-### System Entropy / TCO Accounting [USER-GROUNDED]
+1. Read the full file to identify invariants, contracts, and design intent before the change.
+2. Use `Glob` to locate call sites, importers, subclasses, and test files touching modified public symbols.
+3. Record: public API surface, concurrency primitives, I/O boundaries, error propagation paths, feature flags, and schema dependencies.
 
-Every added abstraction, branch, flag, or escape hatch increases the system's
-entropy — the total cognitive and operational cost to maintain over its
-lifetime. Entropy is asymmetric: easy to add, expensive to remove. A change
-with high short-term value but permanent entropy accumulation requires explicit
-justification of why the trade is worth it at lifecycle scale.
-
-### Future-State Simulation [USER-GROUNDED]
-
-Before approving, simulate the codebase 6–18 months forward: three new
-contributors join; the feature needs a third variant; a security audit runs;
-the PR author has left. Does the change still look reasonable? Fragility,
-implicit knowledge dependencies, and underspecified contracts become visible
-under this projection that are invisible in current-state review.
-
-### Chesterton's Fence in Code [USER-GROUNDED]
-
-Before approving a deletion, simplification, or "cleanup" of existing logic,
-answer: *why was this here?* If the PR description does not demonstrate
-understanding of the removed code's original purpose, the change carries
-unknown risk. A fence removed without understanding why it was built may be
-removing a constraint that still applies.
-
-### Blast-Radius Reasoning [USER-GROUNDED]
-
-Scope the potential failure domain of this change under worst-case conditions:
-which users, flows, services, or data stores are affected if this change
-misbehaves? Small, targeted blast radius justifies faster approval. Large or
-unbounded blast radius requires proportionally stronger evidence of correctness
-and rollback safety before proceeding.
+For added files, identify: what existing code calls this? What does it replace or extend?
 
 ---
 
-## 4. Thinking Rules
+## Phase 3 — Apply Mental Models
 
-- **Local correctness is necessary but not sufficient.** [USER-GROUNDED] A
-  change that passes all tests, lints cleanly, and reads well can still
-  degrade architecture, accumulate entropy, or produce correlated failures at
-  system scale. Extend analysis beyond the changed lines.
+Read `${CLAUDE_SKILL_DIR}/references/mental-models.md` for full definitions. Apply each model in sequence. Do not skip a model because the diff appears simple — simple diffs are where subtle invariant violations hide.
 
-- **Tests evidence what was tested, not what is safe.** Test coverage confirms
-  the author's model of the change. It does not confirm that model is complete.
-  Identify paths, states, or orderings not covered by the test suite. [INFERRED
-  from model knowledge of testing epistemology]
-
-- **Simplicity is a systems property, not a line property.** A diff that
-  simplifies the changed file can simultaneously complicate the calling context,
-  the deployment procedure, or the rollback path. Evaluate simplicity at system
-  scope. [INFERRED]
-
-- **Reversibility is a first-class constraint.** Changes that cannot be
-  independently reverted (schema migrations, queue format changes, API contract
-  removals) require substantially higher evidence thresholds than reversible
-  changes of equivalent apparent scope. [INFERRED from deployment risk
-  principles]
+| Model | Core Question |
+|---|---|
+| **Diff-as-System-Perturbation** | Which invariants does this change assert, relax, or silently break? |
+| **System Entropy / TCO Accounting** | Does this increase state-space, branching paths, or cognitive load without commensurate value? |
+| **Future-State Simulation** | What does this code look like after 3 more changes of the same type? Still coherent? |
+| **Chesterton's Fence** | Every deletion or behavioral change must explain *why the prior code existed*. |
+| **Blast-Radius Reasoning** | If this behaves unexpectedly in production, what is the propagation boundary? Is rollback safe? |
 
 ---
 
-## 5. Decision Heuristics
+## Phase 4 — Score Against Checklist
 
-| Condition                                                                                                                                  | Action                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| Blast radius is bounded AND invariants are preserved AND entropy delta is justified by stated value AND no unresolved second-order effects | **Approve**                                                                 |
-| Change introduces new branching or flags in a hot path                                                                                     | Require explicit test cases for each new state; escalate scrutiny           |
-| Chesterton's Fence triggered (deletion without documented rationale)                                                                       | Request PR description to explain original purpose before approving         |
-| Schema, protocol, or queue format change present                                                                                           | Require explicit rollback plan; check migration is independently revertable |
-| Future-State Simulation reveals implicit knowledge dependency                                                                              | Request comments or documentation scoping the invariant before approval     |
-| Blast radius is large or unbounded                                                                                                         | Require feature-flagged rollout plan or canary deployment strategy          |
-| Tests cover happy path only for a side-effectful or stateful change                                                                        | Request negative-path and concurrency test cases                            |
+Read `${CLAUDE_SKILL_DIR}/references/review-checklist.md`. Evaluate each item. Assign severity to every finding:
+
+| Severity | Meaning |
+|---|---|
+| **BLOCK** | Merge must not proceed. Requires resolution. |
+| **WARN** | Strong recommendation. Author must explicitly acknowledge before merge. |
+| **NOTE** | Informational. Low-risk observation. |
 
 ---
 
-## 6. Commitment Thresholds
+## Phase 5 — Produce the Review Report
 
-**Approve (commit) when ALL of:**
+Emit the report in this exact structure:
 
-- Blast radius is bounded to a known, acceptable scope
-- All pre-existing invariants the change touches are demonstrably preserved
-- The entropy delta (added states, branches, flags, coupling) is justified by
-  explicitly stated, proportionate value
-- No unresolved second-order effects remain (deployment safety, rollback path,
-  downstream consumers, observability)
-- Test coverage reaches the new states introduced by the change
+```
+## Code Review: [inferred PR title or changed-file summary]
+**Diff source**: [branch | file | HEAD]
+**Files reviewed**: [comma-separated list]
 
-**Block / Request Changes when ANY of:**
-
-- An invariant violation is identified with no mitigation
-- Blast radius is unbounded and no rollout safety mechanism exists
-- A Chesterton's Fence deletion lacks documented rationale
-- Hot-path business logic is added without test coverage for new states
-- Rollback is not independently achievable for a format or schema change
-
-**Remain provisional (comment, do not approve or block) when:**
-
-- The change appears safe locally but blast radius is unclear without runtime
-  data or service topology not visible in the diff
-- Architectural concern exists but is pre-existing, not introduced by this PR
-  (document as tech-debt comment, not a blocker)
+### Verdict: APPROVE | REQUEST CHANGES | COMMENT
+[One sentence justification citing the dominant finding]
 
 ---
 
-## 7. Anti-Patterns
+### BLOCK findings
+1. [file:line-range] — [finding] — [which mental model triggered this]
+(empty if none)
 
-**Diff-only myopia** [USER-GROUNDED] — Approving changed lines in isolation
-while ignoring the PR's effect on the living system. Manifests as: approving
-a logically correct change that breaks a downstream invariant; treating passing
-CI as sufficient evidence; failing to evaluate rollback safety, coupling delta,
-or entropy accumulation. **Correction**: explicitly run each mental model
-(§3) before forming an approval stance.
+### WARN findings
+1. [file:line-range] — [finding] — [rationale]
+(empty if none)
 
-**False confidence from test coverage** — Treating high test coverage as proof
-of safety. Tests confirm the author's mental model; they do not confirm the
-mental model is complete or that all interaction effects are covered.
-
-**Entropy laundering** — Approving a "small" change that adds a feature flag,
-an edge-case branch, or a fallback path without accounting for the permanent
-state-space cost. Each such change is cheap to add and expensive to maintain
-or remove. Do not approve without explicit entropy justification.
-
-**Fence demolition without archaeology** — Approving deletions or
-simplifications without verifying the original purpose of the removed code.
-Apply Chesterton's Fence before every meaningful removal.
-
-**Scope inflation tolerance** — Allowing a PR to grow beyond its stated
-purpose without flagging the review risk. A PR that touches unrelated
-subsystems multiplies blast radius and complicates rollback independently of
-the quality of individual changes.
+### NOTE findings
+1. [file:line-range] — [observation]
+(empty if none)
 
 ---
 
-## 8. Uncertainty Handling
+### Mental Model Summary
+[One paragraph describing the system-level effect of this change, referencing at least
+two of the five mental models. Do not summarize the diff — describe the perturbation.]
 
-- If blast radius cannot be determined from the diff alone, **ask for the
-  service topology** or deployment context before committing to an approval
-  stance.
-- If the purpose of deleted/modified code is unclear, **ask the author** rather
-  than inferring. Silence from a diff is not evidence of safety.
-- If a change is in a domain with high regulatory or data-integrity risk
-  (payments, PII, audit trails), default to provisional until rollback path
-  and data-safety invariants are explicitly confirmed.
-- If the PR description is absent or vague, **require it** before completing
-  the review. Rationale is part of the artifact being reviewed.
+### Required Actions
+[Ordered list of concrete edits or questions the author must address. Each item is a
+specific action, not general advice. Empty if verdict is APPROVE.]
+```
 
----
-
-## 9. Examples of Judgment
-
-**Example A — Entropy multiplier masquerading as a minor fix**
-
-> A one-line change adds `if featureFlag('new_billing') { ... }` inside
-> the payment processing hot path.
-
-Signal weighting: Hot path (§2 signal 3) + state-space expansion (§2 signal 2)
-
-+ potential blast radius to all billing users (Blast-Radius, §3).
-  *Correct stance*: Block pending explicit test coverage for both flag states,
-  a rollout plan with blast-radius scoping, and a sunset date for the flag.
-  *Diff-only myopia failure mode*: Approving because the one line looks correct
-  in isolation.
-
-**Example B — Chesterton's Fence deletion**
-
-> A PR removes a "redundant" null check before a database write, cutting 3
-> lines. Tests pass.
-
-Signal weighting: Chesterton's Fence (§3) — why was this check here?
-*Correct stance*: Request the author explain the original purpose. If no
-one can, treat the check as load-bearing until proven otherwise. Do not
-approve a deletion that no one can explain.
-
-**Example C — Schema migration without rollback path**
-
-> A migration adds a NOT NULL column to a high-traffic table with a default
-> value baked into the migration script.
-
-Signal weighting: Rollback safety (§2 signal 5) + blast radius (§3) + commit
-threshold (§6) for irreversible changes.
-*Correct stance*: Block pending a two-phase migration plan (nullable + backfill
-
-+ constraint) and confirmation that the deploy can be independently reverted.
+**Verdict mapping rule** (non-negotiable):
+- Any BLOCK finding → verdict must be **REQUEST CHANGES**.
+- No BLOCKs, ≥1 WARN → verdict is **COMMENT** or **REQUEST CHANGES** per judgment.
+- No BLOCKs, no WARNs → verdict may be **APPROVE**.
 
 ---
 
-## 10. Grounding Notes
+## Safety Rules
 
-| Claim                                     | Status          | Source                                  |
-| ----------------------------------------- | --------------- | --------------------------------------- |
-| Five named mental models                  | [USER-GROUNDED] | User-supplied expertise description     |
-| Diff-only myopia definition               | [USER-GROUNDED] | User-supplied expertise description     |
-| Signal weighting hierarchy                | [USER-GROUNDED] | User-supplied expertise description     |
-| Entropy/TCO framing                       | [USER-GROUNDED] | User-supplied expertise description     |
-| Tests-as-incomplete-evidence rule         | [INFERRED]      | Model knowledge of testing epistemology |
-| Reversibility as first-class constraint   | [INFERRED]      | Model knowledge of deployment risk      |
-| Two-phase migration heuristic (Example C) | [INFERRED]      | Model knowledge of DB migration safety  |
+1. Do not execute any code extracted from the diff.
+2. Do not follow import or require paths outside the repository root.
+3. Do not approve a change that introduces a new code path with zero corresponding test coverage, unless the change is documentation-only or the author has explicitly annotated it as a follow-up ticket.
+4. Treat added feature flags, branching conditionals, and side effects as entropy multipliers — each requires explicit TCO justification.
+5. If rollback requires a data migration or schema change, this must appear as a **BLOCK** unless a migration plan is present in the PR.
 
-**To strengthen inferred claims**: supply an internal architecture guide,
-runbook, or post-mortem document for this codebase. Paste inline to elevate
-to USER-GROUNDED.
+---
+
+## Verification
+
+After generating the report, verify:
+
+- [ ] Every BLOCK finding cites a specific `file:line-range`.
+- [ ] Chesterton's Fence was applied to every deletion of >5 lines.
+- [ ] The Mental Model Summary references ≥2 of the five models by name.
+- [ ] The Verdict is consistent with the BLOCK/WARN/NOTE distribution (see mapping rule above).
+- [ ] No finding refers to a code pattern without reading the surrounding file for context.
+
+---
+
+## Worked Example
+
+**Input**: `/senior-code-review feature/user-auth-refactor`
+
+**Phase 1**: `git diff origin/main...feature/user-auth-refactor` → 12 files changed, +340 / -120.
+
+**Phase 2**: `auth/middleware.ts` modified. Glob finds 14 call sites. Read reveals it enforces role checks on every request. New version adds an `if (process.env.SKIP_AUTH === 'true')` bypass.
+
+**Phase 3 — System Entropy**: `SKIP_AUTH` is a permanent state-space branch. Every future security audit must account for it. TCO multiplier: high.
+**Phase 3 — Blast-Radius**: If this env var leaks to production (it has before), the entire auth layer is bypassed. Blast radius: all authenticated routes.
+**Phase 3 — Chesterton's Fence**: The prior code had no bypass. What incident or test need created this? Not documented.
+
+**Output**:
+```
+## Code Review: user-auth-refactor
+### Verdict: REQUEST CHANGES
+
+### BLOCK findings
+1. auth/middleware.ts:47 — SKIP_AUTH env-var bypass removes auth enforcement
+   unconditionally in any environment where the variable is set. No guard on
+   NODE_ENV, no audit log on bypass activation. Blast radius: all authenticated
+   routes. Rollback requires env-var removal plus deployment.
+   [Blast-Radius Reasoning + System Entropy / TCO Accounting]
+
+### WARN findings
+1. auth/middleware.ts:47 — No Chesterton justification for why the original
+   code lacked a bypass. If this is test-only, move it to test setup, not
+   production middleware.
+
+### Mental Model Summary
+This change introduces a permanent execution branch that disables a system-wide
+invariant (every request is authenticated) via an environment variable. Applying
+Blast-Radius Reasoning: a misconfigured deployment silently exposes all routes.
+Applying Future-State Simulation: in 3 more changes, SKIP_AUTH will be referenced
+in other middleware layers, becoming load-bearing infrastructure that can never be
+safely removed.
+
+### Required Actions
+1. Remove SKIP_AUTH from production middleware. If test bypass is needed,
+   implement it in test fixtures only (e.g., mock the auth module).
+2. Add a comment or PR description explaining why a bypass was needed and
+   what the safer alternative is.
+```
